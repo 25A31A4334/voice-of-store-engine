@@ -224,6 +224,8 @@ class ClassifyResponse(BaseModel):
     store_resolution_source: str
     confidence: float
     routing_destination: str
+    sentiment: Optional[str] = "Neutral"
+    sentiment_score: Optional[float] = 0.0
 
 
 # -----------------------------------------------------------------------------
@@ -550,6 +552,11 @@ def classify_live_feedback(req: ClassifyRequest) -> ClassifyResponse:
     issue_type_id = str(pred_types[0])
     confidence = float(confs[0])
 
+    # 2b. Sentiment Classification
+    s_res = state.classifier.sentiment_engine.predict(text, rating=req.rating)
+    sentiment = s_res["sentiment"]
+    sentiment_score = s_res["compound"]
+
     # 3. Severity Determination
     severity = state.severity_engine.predict_single(text, issue_type_id)
 
@@ -560,7 +567,7 @@ def classify_live_feedback(req: ClassifyRequest) -> ClassifyResponse:
     tax_info = state.taxonomy_dict.get(issue_type_id, {})
     owner_func = tax_info.get("owner_function", "None (not actionable)")
     policy_floor = tax_info.get("policy_severity_floor", "low")
-    issue_name = tax_info.get("issue_type", issue_type_id)
+    issue_name = "Praise / compliment (No Negative Issue)" if issue_type_id == "NI01" else tax_info.get("issue_type", issue_type_id)
 
     is_routable = state.actionability_engine.is_routable(resolved_sid, issue_type_id)
 
@@ -586,6 +593,8 @@ def classify_live_feedback(req: ClassifyRequest) -> ClassifyResponse:
         store_resolution_source=res_source,
         confidence=round(confidence, 4),
         routing_destination=routing_dest,
+        sentiment=sentiment,
+        sentiment_score=sentiment_score,
     )
 
 
@@ -734,14 +743,20 @@ def submit_customer_feedback(
     issue_type_id = str(pred_types[0])
     confidence = float(confs[0])
 
+    s_res = state.classifier.sentiment_engine.predict(text, rating=req.rating)
+    sentiment = s_res["sentiment"]
+
     # 3. Severity & Policy Floor
     severity = state.severity_engine.predict_single(text, issue_type_id)
 
     # 4. Actionability & Owner Function
     actionable = state.actionability_engine.predict_single(text, target_sid, issue_type_id)
     tax_info = state.taxonomy_dict.get(issue_type_id, {})
-    owner_func = tax_info.get("owner_function", "Store Ops")
-    issue_name = tax_info.get("issue_type", issue_type_id)
+    owner_func = "Customer Experience / None" if issue_type_id == "NI01" else tax_info.get("owner_function", "Store Ops")
+    issue_name = "Praise / compliment (No Negative Issue)" if issue_type_id == "NI01" else tax_info.get("issue_type", issue_type_id)
+    if issue_type_id == "NI01":
+        actionable = 0
+        severity = "low"
 
     # 5. Generate unique feedback ID
     import secrets
@@ -855,6 +870,7 @@ def submit_customer_feedback(
             "severity": severity,
             "actionable": actionable,
             "confidence": round(confidence, 4),
+            "sentiment": sentiment,
             "status": "new",
         },
     }

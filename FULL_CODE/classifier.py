@@ -36,6 +36,11 @@ try:
 except ImportError:
     from text_preprocessor import TextPreprocessor
 
+try:
+    from FULL_CODE.services.sentiment_engine import SentimentEngine
+except ImportError:
+    from services.sentiment_engine import SentimentEngine
+
 
 class IssueClassifier:
     """Supervised classifier for Saffron Retail issue taxonomy with domain disambiguation."""
@@ -43,6 +48,11 @@ class IssueClassifier:
     # Domain disambiguation patterns to resolve out-of-vocabulary terms and n-gram subword false positives
     RE_HOSPITALITY = re.compile(
         r"\b(hospitality|customer service|guest service)\b",
+        re.IGNORECASE,
+    )
+    RE_NEGATIVE_HOSPITALITY = re.compile(
+        r"\b(worst|bad|terrible|horrible|poor|pathetic|rude|unhelpful|disappointing|awful|zero|no)\b.{0,30}\b(hospitality|customer service|guest service)\b|"
+        r"\b(hospitality|customer service|guest service)\b.{0,30}\b(worst|bad|terrible|horrible|poor|pathetic|rude|unhelpful|disappointing|awful|zero|no)\b",
         re.IGNORECASE,
     )
     RE_STAFF_BEHAVIOUR = re.compile(
@@ -106,6 +116,7 @@ class IssueClassifier:
         self.model = CalibratedClassifierCV(estimator=base_svc, cv=3)
         self.is_fitted = False
         self.classes_: np.ndarray | None = None
+        self.sentiment_engine = SentimentEngine()
 
     def _prepare_texts(self, texts: pd.Series | List[str]) -> List[str]:
         """Preprocesses a collection of raw texts."""
@@ -120,59 +131,66 @@ class IssueClassifier:
         self.is_fitted = True
         return self
 
-    def _apply_domain_rules(self, text: str, ml_pred: str, ml_conf: float) -> Tuple[str, float]:
-        """Applies domain-aware disambiguation rules for out-of-vocabulary terms and false-positive praise."""
-        t = str(text).strip()
+    def _apply_domain_rules_with_sentiment(
+        self,
+        full_text: str,
+        eval_text: str,
+        ml_pred: str,
+        ml_conf: float,
+        sentiment: str,
+    ) -> Tuple[str, float]:
+        """Applies domain-aware disambiguation rules with decoupled sentiment awareness."""
+        t_full = str(full_text).strip()
+        t_eval = str(eval_text).strip()
 
-        # 1. Hospitality or explicit staff behaviour complaint -> IT03 (Unhelpful or poorly trained staff)
-        if self.RE_HOSPITALITY.search(t):
-            if ml_pred not in {"IT03", "IT04"}:
-                return ("IT03", max(ml_conf, 0.85))
-
-        if self.RE_STAFF_BEHAVIOUR.search(t):
-            if ml_pred not in {"IT03", "IT04"}:
+        # 1. Staff Behaviour or Negative Hospitality complaints -> IT03 (Unhelpful or poorly trained staff)
+        if self.RE_NEGATIVE_HOSPITALITY.search(t_full) or self.RE_STAFF_BEHAVIOUR.search(t_full):
+            if sentiment in {"Negative", "Mixed"} or self.RE_PRAISE_NEGATION_GUARD.search(t_full):
                 return ("IT03", max(ml_conf, 0.85))
 
         # 2. Refrigerator / freezer breakdown -> IT10 (Refrigeration / cold-chain failure)
         # Note: IT11 is strictly for non-refrigeration equipment breakdown per official taxonomy
-        if self.RE_REFRIGERATION.search(t):
+        if self.RE_REFRIGERATION.search(t_eval):
             if ml_pred in {"IT11", "IT14", "IT07", "NI01", "NI02"}:
                 return ("IT10", max(ml_conf, 0.85))
 
         # 3. Fresh produce quality (vegetables/fruits rotten) -> IT15 (Poor quality fresh produce)
-        if self.RE_PRODUCE_QUALITY.search(t):
+        if self.RE_PRODUCE_QUALITY.search(t_eval):
             if ml_pred not in {"IT15"}:
                 return ("IT15", max(ml_conf, 0.85))
 
         # 4. Spoiled dairy -> IT16 (Expired / near-expiry) or IT10 (Refrigeration failure)
-        if self.RE_SPOILED_DAIRY.search(t):
+        if self.RE_SPOILED_DAIRY.search(t_eval):
             if ml_pred in {"IT14", "IT15", "IT11", "NI01", "NI02"}:
-                if self.RE_REFRIGERATION.search(t):
+                if self.RE_REFRIGERATION.search(t_eval):
                     return ("IT10", max(ml_conf, 0.85))
                 return ("IT16", max(ml_conf, 0.85))
 
-        # 5. False-positive praise guard: NI01 (Praise) must never trigger on negative grievance words
-        if ml_pred == "NI01" and self.RE_PRAISE_NEGATION_GUARD.search(t):
-            if re.search(r"\b(staff|cashier|guard|manager|hospitality|service)\b", t, re.IGNORECASE) or re.search(r"\b(unhelpful|rude|attitude)\b", t, re.IGNORECASE):
+        # 5. Pure positive praise guard: Positive feedback must NEVER trigger negative issue codes IT01-IT30
+        if sentiment == "Positive" and not self.sentiment_engine.RE_EXPLICIT_DEFECT.search(t_full):
+            return ("NI01", max(ml_conf, 0.90))
+
+        # 6. False-positive praise guard: NI01 (Praise) must never trigger on negative grievance words
+        if ml_pred == "NI01" and (sentiment == "Negative" or self.RE_PRAISE_NEGATION_GUARD.search(t_full)):
+            if re.search(r"\b(staff|cashier|guard|manager|hospitality|service)\b", t_full, re.IGNORECASE) or re.search(r"\b(unhelpful|rude|attitude)\b", t_full, re.IGNORECASE):
                 return ("IT03", 0.75)
             return ("NI02", 0.50)
 
         return (ml_pred, ml_conf)
 
-    def predict(self, texts: pd.Series | List[str]) -> np.ndarray:
-        """Predicts issue type IDs for given texts."""
-        if not self.is_fitted:
-            raise ValueError("Classifier is not fitted yet. Call fit() first.")
-        clean_texts = self._prepare_texts(texts)
-        X = self.feature_union.transform(clean_texts)
-        raw_preds = self.model.predict(X)
-
-        text_list = list(texts)
-        final_preds = []
-        for raw_t, pred in zip(text_list, raw_preds):
-            adj_pred, _ = self._apply_domain_rules(str(raw_t), pred, 1.0)
-            final_preds.append(adj_pred)
-        return np.array(final_preds)
+    def _apply_domain_rules(self, text: str, ml_pred: str, ml_conf: float) -> Tuple[str, float]:
+        """Applies domain-aware disambiguation rules for out-of-vocabulary terms and false-positive praise."""
+        s_res = self.sentiment_engine.predict(str(text))
+        eval_text = str(text)
+        if s_res["sentiment"] == "Mixed" and s_res["neg_clauses"]:
+            eval_text = " ".join(s_res["neg_clauses"])
+        return self._apply_domain_rules_with_sentiment(
+            full_text=str(text),
+            eval_text=eval_text,
+            ml_pred=ml_pred,
+            ml_conf=ml_conf,
+            sentiment=s_res["sentiment"],
+        )
 
     def predict_proba(self, texts: pd.Series | List[str]) -> np.ndarray:
         """Predicts class probabilities."""
@@ -183,20 +201,47 @@ class IssueClassifier:
         return self.model.predict_proba(X)
 
     def predict_with_confidence(self, texts: pd.Series | List[str]) -> Tuple[np.ndarray, np.ndarray]:
-        """Returns both predicted class and top probability confidence."""
-        probs = self.predict_proba(texts)
+        """Returns both predicted class and top probability confidence with sentiment and clause disambiguation."""
+        if not self.is_fitted:
+            raise ValueError("Classifier is not fitted yet. Call fit() first.")
+
+        text_list = [str(t) for t in texts]
+        eval_texts = []
+        sentiments = []
+        for t in text_list:
+            s_res = self.sentiment_engine.predict(t)
+            sentiments.append(s_res["sentiment"])
+            # For mixed feedback with a defect clause, isolate the defect clause for classification
+            if s_res["sentiment"] == "Mixed" and s_res["neg_clauses"]:
+                eval_texts.append(" ".join(s_res["neg_clauses"]))
+            else:
+                eval_texts.append(t)
+
+        clean_texts = self._prepare_texts(eval_texts)
+        X = self.feature_union.transform(clean_texts)
+        probs = self.model.predict_proba(X)
         top_idx = np.argmax(probs, axis=1)
         predictions = self.classes_[top_idx]
         confidences = np.max(probs, axis=1)
 
-        text_list = list(texts)
         final_preds = []
         final_confs = []
-        for raw_t, pred, conf in zip(text_list, predictions, confidences):
-            adj_pred, adj_conf = self._apply_domain_rules(str(raw_t), pred, float(conf))
+        for raw_t, eval_t, pred, conf, sent in zip(text_list, eval_texts, predictions, confidences, sentiments):
+            adj_pred, adj_conf = self._apply_domain_rules_with_sentiment(
+                full_text=raw_t,
+                eval_text=eval_t,
+                ml_pred=pred,
+                ml_conf=float(conf),
+                sentiment=sent,
+            )
             final_preds.append(adj_pred)
             final_confs.append(adj_conf)
         return np.array(final_preds), np.array(final_confs, dtype=float)
+
+    def predict(self, texts: pd.Series | List[str]) -> np.ndarray:
+        """Predicts issue type IDs for given texts."""
+        preds, _ = self.predict_with_confidence(texts)
+        return preds
 
     def evaluate_cv(
         self,

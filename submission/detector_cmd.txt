@@ -1,0 +1,1 @@
+python FULL_CODE/detector.py --feedback {feedback} --as-of {asof} --out {out}

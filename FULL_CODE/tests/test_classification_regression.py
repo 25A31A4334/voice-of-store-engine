@@ -250,5 +250,79 @@ class TestClassificationRegression:
         for text, expected_tid in operational_cases:
             pred_types, _ = state.classifier.predict_with_confidence([text])
             assert str(pred_types[0]) == expected_tid, f"Text '{text}' expected {expected_tid}, got {pred_types[0]}"
-            pred_types, _ = state.classifier.predict_with_confidence([text])
-            assert str(pred_types[0]) == expected_tid, f"Text '{text}' expected {expected_tid}, got {pred_types[0]}"
+
+    def test_positive_hospitality_and_staff_praise(self, client: TestClient):
+        """Verifies that positive feedback mentioning staff, service, or hospitality is mapped to NI01 (Praise) and never IT03."""
+        praise_cases = [
+            "The staff were very helpful and welcoming.",
+            "Excellent hospitality and quick service.",
+            "Best hospitality",
+            "The store was clean and staff were polite",
+            "Wonderful customer service from the cashier",
+        ]
+        for text in praise_cases:
+            pred_types, confs = state.classifier.predict_with_confidence([text])
+            tid = str(pred_types[0])
+            s_res = state.classifier.sentiment_engine.predict(text)
+            assert s_res["sentiment"] == "Positive", f"Expected Positive sentiment for '{text}', got {s_res['sentiment']}"
+            assert tid == "NI01", f"Expected NI01 for positive praise '{text}', got {tid}"
+
+    def test_mixed_sentiment_contrastive_feedback(self, client: TestClient):
+        """Verifies that mixed contrastive feedback identifies the actual operational issue and does not falsely accuse staff."""
+        mixed_cases = [
+            ("The staff were polite, but the room was dirty.", "IT06"),
+            ("The staff were polite, but the floor was dirty.", "IT07"),
+            ("The staff were polite, but billing was slow.", "IT01"),
+        ]
+        for text, expected_tid in mixed_cases:
+            pred_types, confs = state.classifier.predict_with_confidence([text])
+            tid = str(pred_types[0])
+            s_res = state.classifier.sentiment_engine.predict(text)
+            assert s_res["sentiment"] == "Mixed", f"Expected Mixed sentiment for '{text}', got {s_res['sentiment']}"
+            assert tid == expected_tid, f"Expected {expected_tid} for '{text}', got {tid}"
+            assert tid != "IT03", f"Praise for staff should not result in IT03 when another defect is reported: '{text}'"
+
+    def test_classify_api_returns_sentiment(self, client: TestClient):
+        """Verifies that POST /api/classify returns sentiment and decoupled issue category."""
+        # 1. Positive feedback
+        res1 = client.post("/api/classify", json={"text": "Best hospitality"})
+        assert res1.status_code == 200, res1.text
+        data1 = res1.json()
+        assert data1["issue_type_id"] == "NI01"
+        assert data1["sentiment"] == "Positive"
+        assert "Praise" in data1["issue_type_name"]
+        assert data1["actionable"] == 0
+
+        # 2. Mixed feedback
+        res2 = client.post("/api/classify", json={"text": "The staff were polite, but the room was dirty."})
+        assert res2.status_code == 200, res2.text
+        data2 = res2.json()
+        assert data2["issue_type_id"] == "IT06"
+        assert data2["sentiment"] == "Mixed"
+
+        # 3. Negative feedback
+        res3 = client.post("/api/classify", json={"text": "The staff were rude and unhelpful."})
+        assert res3.status_code == 200, res3.text
+        data3 = res3.json()
+        assert data3["issue_type_id"] == "IT03"
+        assert data3["sentiment"] == "Negative"
+
+    def test_customer_submission_positive_hospitality_persisted_as_ni01(self, client: TestClient, tokens: dict):
+        """Verifies that customer submitting 'Best hospitality' is stored as NI01 (Praise) and not an incident alert."""
+        cust_token = tokens["customer"]
+        res = client.post(
+            "/api/customer/submissions",
+            headers={"Authorization": f"Bearer {cust_token}"},
+            json={
+                "store_id": "ST-D69EG",
+                "channel": "in_app",
+                "rating": 5.0,
+                "text": "Best hospitality",
+            },
+        )
+        assert res.status_code == 201, res.text
+        sub = res.json()["submission"]
+        assert sub["issue_type_id"] == "NI01"
+        assert sub["actionable"] == 0
+        assert sub["severity"] == "low"
+        assert sub["sentiment"] == "Positive"

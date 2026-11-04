@@ -827,6 +827,20 @@ async function handleClassify(e) {
         sevBadge.className = `px-3 py-1 rounded-md font-bold text-xs badge-${sev}`;
         document.getElementById('resFloor').innerText = data.policy_severity_floor;
 
+        // Sentiment Badge
+        const sentBadge = document.getElementById('resSentimentBadge');
+        if (sentBadge) {
+            const sent = data.sentiment || 'Neutral';
+            sentBadge.innerText = sent;
+            let sentClass = 'bg-slate-100 text-slate-700';
+            if (sent === 'Positive') sentClass = 'bg-emerald-100 text-emerald-800 border border-emerald-300';
+            else if (sent === 'Negative') sentClass = 'bg-red-100 text-red-800 border border-red-300';
+            else if (sent === 'Mixed') sentClass = 'bg-amber-100 text-amber-800 border border-amber-300';
+            sentBadge.className = `px-3 py-1 rounded-md font-bold text-xs ${sentClass}`;
+            const sentScoreElem = document.getElementById('resSentimentScore');
+            if (sentScoreElem) sentScoreElem.innerText = data.sentiment_score !== undefined ? Number(data.sentiment_score).toFixed(2) : '0.00';
+        }
+
         // Actionable Badge
         const actBadge = document.getElementById('resActionableBadge');
         actBadge.innerText = data.actionable === 1 ? 'Actionable (1)' : 'Non-Actionable (0)';
