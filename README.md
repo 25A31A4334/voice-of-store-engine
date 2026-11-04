@@ -1,6 +1,4 @@
-﻿# R5 — Voice-of-Store Engine
-
-**Team ID:** 000273
+﻿# Voice-of-Store Engine
 
 ## What it does
 An AI-powered retail feedback analysis platform that helps identify, classify, prioritize, and monitor customer issues across stores. It includes customer feedback workflows, store management features, dashboards, and emerging-issue detection.
