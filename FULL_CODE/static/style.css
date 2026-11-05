@@ -1,28 +1,134 @@
-/* Custom styling for Voice of Store Engine Platform */
+/* ==========================================================================
+   Voice of Store Engine — Modern SaaS Design System
+   Colour Theme: Blue (#2563EB) + Mint (#6EE7B7) + Lime (#A3E635)
+   Typography: Plus Jakarta Sans ('Plus Jakarta Sans', 'Inter', sans-serif)
+   ========================================================================== */
 
 :root {
-    --primary: #F59E0B;
-    --primary-dark: #D97706;
-    --navy: #0F172A;
-    --navy-light: #1E293B;
+    /* Font Family - Modern SaaS Plus Jakarta Sans */
+    --font-family-base: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+
+    /* Brand Palette */
+    --primary-blue: #2563EB;
+    --primary-blue-dark: #1D4ED8;
+    --primary-blue-light: #3B82F6;
+    --primary-blue-subtle: #EFF6FF;
+
+    --secondary-mint: #6EE7B7;
+    --mint-light: #ECFDF5;
+    --mint-border: #A7F3D0;
+    --mint-dark: #065F46;
+
+    --accent-lime: #A3E635;
+    --lime-light: #F7FEE7;
+    --lime-border: #D9F99D;
+    --lime-dark: #3F6212;
+
+    /* Base Surfaces & Typography */
+    --bg-light: #F8FAFC;
+    --dark-text: #172554;
+    --secondary-text: #64748B;
+    --navy-header: #0B132B;
+    --border-color: #E2E8F0;
+}
+
+/* Typography Enforcement Across All Elements */
+*, *::before, *::after {
+    font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+}
+
+html {
+    scroll-behavior: smooth;
+    font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
 }
 
 body {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background-color: #F8FAFC;
-    color: #1E293B;
+    font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+    background-color: var(--bg-light);
+    color: var(--dark-text);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
 }
 
-/* Glassmorphism and Card Accents */
+/* Explicit element font-family rules */
+h1, h2, h3, h4, h5, h6,
+p, span, a, label, li, ul, ol,
+button, input, select, textarea,
+table, th, td, tr, thead, tbody,
+div, section, nav, header, footer, modal {
+    font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+}
+
+/* Typography Hierarchy & Weight */
+h1, h2, h3, h4, h5, h6 {
+    color: var(--dark-text);
+    letter-spacing: -0.02em;
+}
+
+/* Card Hover Lift & Shadow Transitions */
 .card-hover {
-    transition: all 0.2s ease-in-out;
-}
-.card-hover:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.04);
+    transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.22s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.22s ease;
 }
 
-/* Severity Badges */
+.card-hover:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 14px 28px -6px rgba(37, 99, 235, 0.12), 0 6px 12px -2px rgba(15, 23, 42, 0.05);
+    border-color: rgba(37, 99, 235, 0.35);
+}
+
+/* Primary SaaS Action Buttons (Blue) */
+.btn-primary {
+    background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
+    color: #FFFFFF !important;
+    font-weight: 700;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25);
+}
+
+.btn-primary:hover {
+    background: linear-gradient(135deg, #1D4ED8 0%, #1E40AF 100%);
+    box-shadow: 0 6px 16px rgba(37, 99, 235, 0.35);
+    transform: translateY(-1px);
+}
+
+.btn-primary:active {
+    transform: translateY(0);
+}
+
+/* Secondary Mint Supporting Cards & Buttons */
+.card-mint {
+    background-color: #ECFDF5;
+    border: 1px solid #A7F3D0;
+    color: #065F46;
+}
+
+.btn-mint {
+    background-color: #ECFDF5;
+    color: #065F46;
+    border: 1px solid #A7F3D0;
+    transition: all 0.2s ease;
+}
+
+.btn-mint:hover {
+    background-color: #D1FAE5;
+    color: #047857;
+}
+
+/* Accent Lime Highlights & Badges */
+.pill-lime {
+    background-color: #F7FEE7;
+    color: #3F6212;
+    border: 1px solid #D9F99D;
+    font-weight: 700;
+}
+
+.badge-lime {
+    background-color: #F7FEE7;
+    color: #365314;
+    border: 1px solid #BEF264;
+}
+
+/* Meaningful Status Badges (Preserved for Operational Safety) */
 .badge-critical {
     background-color: #FEE2E2;
     color: #991B1B;
@@ -39,19 +145,19 @@ body {
     border: 1px solid #FCD34D;
 }
 .badge-low {
-    background-color: #E0E7FF;
-    color: #3730A3;
-    border: 1px solid #C7D2FE;
+    background-color: #EFF6FF;
+    color: #1E40AF;
+    border: 1px solid #BFDBFE;
 }
 
 /* Actionable Badges */
 .badge-actionable-yes {
-    background-color: #DCFCE7;
-    color: #166534;
-    border: 1px solid #86EFAC;
+    background-color: #ECFDF5;
+    color: #065F46;
+    border: 1px solid #A7F3D0;
 }
 .badge-actionable-no {
-    background-color: #F1F5F9;
+    background-color: #F8FAFC;
     color: #64748B;
     border: 1px solid #CBD5E1;
 }
@@ -62,7 +168,7 @@ body {
     font-weight: 700;
 }
 .trend-decrease {
-    color: #16A34A;
+    color: #059669;
     font-weight: 700;
 }
 .trend-flat {
@@ -70,20 +176,58 @@ body {
     font-weight: 600;
 }
 
-/* Custom Scrollbar */
+/* Sticky Navigation Bar Polish */
+.portal-nav-sticky {
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    background-color: rgba(255, 255, 255, 0.98);
+    box-shadow: 0 4px 6px -1px rgba(15, 23, 42, 0.05), 0 2px 4px -2px rgba(15, 23, 42, 0.03);
+}
+
+/* Active Nav Pill in Single Navigation */
+.nav-pill-active {
+    background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
+    color: #FFFFFF !important;
+    font-weight: 700 !important;
+    box-shadow: 0 2px 6px rgba(37, 99, 235, 0.3);
+}
+
+.nav-pill-inactive {
+    color: #475569;
+    background-color: #F8FAFC;
+    border: 1px solid #E2E8F0;
+    transition: all 0.18s ease-in-out;
+}
+
+.nav-pill-inactive:hover {
+    color: #2563EB;
+    background-color: #EFF6FF;
+    border-color: #BFDBFE;
+}
+
+/* Custom Scrollbars */
 ::-webkit-scrollbar {
     width: 6px;
     height: 6px;
 }
 ::-webkit-scrollbar-track {
-    background: #F1F5F9;
+    background: #F8FAFC;
 }
 ::-webkit-scrollbar-thumb {
     background: #CBD5E1;
-    border-radius: 3px;
+    border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
     background: #94A3B8;
+}
+
+/* Hide scrollbar for clean horizontal nav swiping on mobile */
+.no-scrollbar::-webkit-scrollbar {
+    display: none;
+}
+.no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
 }
 
 /* Responsive Chart Container Styles */
@@ -101,6 +245,22 @@ body {
     max-height: 260px;
 }
 
+/* Animations & Transitions */
+@keyframes fadeInTab {
+    from {
+        opacity: 0;
+        transform: translateY(4px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.fade-in-tab {
+    animation: fadeInTab 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
 /* Skeleton Loading Animation */
 @keyframes shimmer {
     0% { background-position: -200% 0; }
@@ -114,12 +274,13 @@ body {
     border-radius: 0.5rem;
 }
 
-/* Interactive Card Transitions */
-.interactive-card {
-    transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-}
-.interactive-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 10px 20px -3px rgba(15, 23, 42, 0.08), 0 4px 6px -2px rgba(15, 23, 42, 0.04);
-}
 
+/* Accessibility: Respect Reduced Motion */
+@media (prefers-reduced-motion: reduce) {
+    *, ::before, ::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+}

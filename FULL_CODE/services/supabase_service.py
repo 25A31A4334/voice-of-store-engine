@@ -93,6 +93,25 @@ class SupabaseService:
                 except Exception:
                     pass
 
+                # Fallback to local SQLite profile if full_name is generic ("Customer", "User") or missing
+                if not full_name or full_name.strip().lower() in ("customer", "user", email.split("@")[0].lower()):
+                    try:
+                        from FULL_CODE.db.connection import get_db_connection
+                        with get_db_connection() as conn:
+                            db_user = conn.execute(
+                                "SELECT full_name, role, assigned_store_id FROM users WHERE LOWER(email) = LOWER(?)",
+                                (email,)
+                            ).fetchone()
+                            if db_user:
+                                if db_user["full_name"]:
+                                    full_name = db_user["full_name"]
+                                if not role or role == "customer":
+                                    role = db_user["role"] or role
+                                if not assigned_store_id and db_user["assigned_store_id"]:
+                                    assigned_store_id = db_user["assigned_store_id"]
+                    except Exception:
+                        pass
+
                 return {
                     "id": user_id,
                     "email": email,

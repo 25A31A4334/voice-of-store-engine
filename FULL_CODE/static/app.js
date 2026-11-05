@@ -46,7 +46,15 @@ const PRESETS = {
 // Chart.js Instance Cache and Safe Lifecycle Renderer
 window._activeCharts = window._activeCharts || {};
 
+// Modern Plus Jakarta Sans for all Chart.js visualizations
+if (typeof Chart !== 'undefined' && Chart.defaults) {
+    Chart.defaults.font.family = "'Plus Jakarta Sans', 'Inter', sans-serif";
+}
+
 function renderOrUpdateChart(canvasId, config) {
+    if (typeof Chart !== 'undefined' && Chart.defaults) {
+        Chart.defaults.font.family = "'Plus Jakarta Sans', 'Inter', sans-serif";
+    }
     if (typeof Chart === 'undefined') {
         console.warn('Chart.js library not loaded yet for canvas:', canvasId);
         return null;
@@ -105,11 +113,28 @@ async function parseErrorResponse(res, defaultMsg = 'An unexpected error occurre
 }
 
 // -----------------------------------------------------------------------------
+// Active Tab Detection Helper
+// -----------------------------------------------------------------------------
+function getCurrentActiveTab() {
+    const rawHash = (window.location.hash || '').replace(/^#\/?/, '').split('?')[0].trim();
+    if (!rawHash || rawHash === 'home') return 'home';
+    if (rawHash.startsWith('customer')) return 'customer';
+    if (rawHash.startsWith('manager')) return 'manager';
+    if (rawHash.startsWith('login')) return 'login';
+    return rawHash;
+}
+
+// -----------------------------------------------------------------------------
 // Initialization
 // -----------------------------------------------------------------------------
-document.addEventListener('DOMContentLoaded', () => {
-    initSupabaseAuth();
-    loadStoredLocalSession();
+document.addEventListener('DOMContentLoaded', async () => {
+    // 1. Immediately reset auth UI to guest state to prevent any flicker of customer content
+    updateAuthUI(null);
+
+    // 2. Asynchronously validate stored session (local JWT or Supabase) with the backend
+    const validatedUser = await restoreAndValidateStoredSession();
+
+    // 3. Load public datasets for landing page
     loadKPIs();
     loadRegionalBrief();
     loadEmergingAlerts();
@@ -118,8 +143,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     setupHistoryListener();
 
-    // Route management: Opening base URL '/' must always display the public welcome page
-    const initialUser = getAuthUser();
+    // 4. Initial Route Management
     let initialTab = 'home';
     let subView = null;
 
@@ -147,17 +171,19 @@ document.addEventListener('DOMContentLoaded', () => {
         switchTab('home', false);
     } else if (initialTab === 'login') {
         switchTab('home', false);
-        if (!initialUser) {
+        if (!validatedUser) {
             const role = (window.location.hash && window.location.hash.includes('manager')) ? 'manager' : ((window.location.hash && window.location.hash.includes('admin')) ? 'admin' : 'customer');
             openAuthModalForRole(role, false);
         }
-    } else if (initialUser) {
+    } else if (validatedUser && validatedUser.role) {
         // Explicit deep-link hash requested by an authenticated user
         const adminViews = ['overview', 'alerts', 'classifier', 'explorer', 'scorecard', 'admin-users', 'admin-insights', 'admin-remediations', 'admin-integrations', 'admin-settings', 'admin-audit'];
-        if (adminViews.includes(initialTab) && initialUser.role !== 'admin') {
+        if (adminViews.includes(initialTab) && validatedUser.role !== 'admin') {
+            history.replaceState({ tab: 'home' }, '', '#home');
             switchTab('home', false);
             showManagerToast('Access Denied', 'Administrator privileges required for this view.', 'error');
-        } else if (initialTab === 'manager' && initialUser.role !== 'store_manager' && initialUser.role !== 'admin') {
+        } else if (initialTab === 'manager' && validatedUser.role !== 'store_manager' && validatedUser.role !== 'admin') {
+            history.replaceState({ tab: 'home' }, '', '#home');
             switchTab('home', false);
             showManagerToast('Access Denied', 'Store Manager privileges required for this workspace.', 'error');
         } else {
@@ -175,6 +201,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     } else {
         // Explicit deep-link hash requested by unauthenticated visitor -> protected views redirect to home
+        history.replaceState({ tab: 'home' }, '', '#home');
         switchTab('home', false);
         const role = initialTab === 'manager' ? 'manager' : (initialTab === 'customer' ? 'customer' : 'admin');
         showManagerToast('Sign-In Required', 'Please sign in to access this workspace.', 'error');
@@ -214,13 +241,8 @@ function setupHistoryListener() {
 
         // Handle navigation back to login screen
         if (targetTab === 'login') {
-            if (user) {
-                // If user is already authenticated, close login modal and show home
-                const modal = document.getElementById('authModal');
-                if (modal && !modal.classList.contains('hidden')) {
-                    modal.classList.add('hidden');
-                    clearAuthAlert();
-                }
+            if (user && user.role) {
+                closeAuthModal();
                 switchTab('home', false);
                 return;
             }
@@ -228,16 +250,11 @@ function setupHistoryListener() {
             openAuthModalForRole(role, false);
             return;
         } else {
-            // Close auth modal if user navigates away from login via history
-            const modal = document.getElementById('authModal');
-            if (modal && !modal.classList.contains('hidden')) {
-                modal.classList.add('hidden');
-                clearAuthAlert();
-            }
+            closeAuthModal();
         }
 
-        // If user logged out, protect authenticated workspaces from being usable via Back button
-        if (!user || !token) {
+        // If user logged out or unauthenticated, protect authenticated workspaces from being usable via Back button
+        if (!user || !token || !user.role) {
             if (targetTab !== 'home') {
                 history.replaceState({ tab: 'home' }, '', '#home');
                 switchTab('home', false);
@@ -247,7 +264,7 @@ function setupHistoryListener() {
         }
 
         // Authenticated user navigates Back to home: display home without logging out!
-        if (user && targetTab === 'home') {
+        if (targetTab === 'home') {
             switchTab('home', false);
             return;
         }
@@ -282,7 +299,7 @@ function switchTab(tabId, pushHistory = true, subView = null) {
     if (tabId !== 'home') {
         const adminViews = ['overview', 'alerts', 'classifier', 'explorer', 'scorecard', 'admin-users', 'admin-insights', 'admin-remediations', 'admin-integrations', 'admin-settings', 'admin-audit'];
         if (adminViews.includes(tabId)) {
-            if (!user || !token) {
+            if (!user || !token || !user.role) {
                 showManagerToast('Administrator Sign-In Required', 'Please sign in with administrator credentials to access platform analytics.', 'error');
                 if (pushHistory) {
                     history.pushState({ tab: 'login', role: 'admin' }, '', '#login-admin');
@@ -296,13 +313,15 @@ function switchTab(tabId, pushHistory = true, subView = null) {
                 showManagerToast('Access Denied', 'This section is restricted to HQ Administrators.', 'error');
                 if (user.role === 'store_manager') {
                     switchTab('manager', pushHistory);
-                } else {
+                } else if (user.role === 'customer') {
                     switchTab('customer', pushHistory);
+                } else {
+                    switchTab('home', pushHistory);
                 }
                 return;
             }
         } else if (tabId === 'manager') {
-            if (!user || !token) {
+            if (!user || !token || !user.role) {
                 showManagerToast('Store Manager Sign-In Required', 'Please sign in to access the store manager workspace.', 'error');
                 openAuthModalForRole('manager', pushHistory);
                 return;
@@ -310,6 +329,17 @@ function switchTab(tabId, pushHistory = true, subView = null) {
             if (user.role === 'customer') {
                 showManagerToast('Access Denied', 'The Store Manager workspace is restricted to store managers and administrators.', 'error');
                 switchTab('customer', pushHistory);
+                return;
+            }
+        } else if (tabId === 'customer') {
+            if (!user || !token || !user.role) {
+                showManagerToast('Customer Sign-In Required', 'Please sign in or register to access the Customer Portal.', 'error');
+                if (pushHistory) {
+                    history.pushState({ tab: 'login', role: 'customer' }, '', '#login-customer');
+                } else {
+                    history.replaceState({ tab: 'login', role: 'customer' }, '', '#login-customer');
+                }
+                openAuthModalForRole('customer', false);
                 return;
             }
         }
@@ -340,7 +370,11 @@ function switchTab(tabId, pushHistory = true, subView = null) {
     }
 
     try {
-        sessionStorage.setItem('vse_active_tab', tabId);
+        if (tabId === 'home') {
+            sessionStorage.removeItem('vse_active_tab');
+        } else {
+            sessionStorage.setItem('vse_active_tab', tabId);
+        }
     } catch (e) {}
 
     // Synchronize browser history and URL hash predictably without duplicate entries
@@ -396,8 +430,10 @@ function renderWorkspaceNavigation(user, activeTabId) {
     const container = document.getElementById('workspaceNavItems');
     if (!container || !navBar) return;
 
-    // Do NOT show internal dashboard navigation when on public landing page or unauthenticated
-    if (!user || activeTabId === 'home') {
+    const currentTab = activeTabId || getCurrentActiveTab();
+
+    // Strict guard: Do NOT show internal dashboard navigation when on public landing page or unauthenticated
+    if (!user || !user.role || currentTab === 'home') {
         navBar.classList.add('hidden');
         container.innerHTML = '';
         return;
@@ -450,10 +486,10 @@ function renderWorkspaceNavigation(user, activeTabId) {
         btn.innerText = item.label;
         btn.onclick = item.action;
         if (item.active) {
-            btn.className = 'px-3.5 py-1.5 rounded-lg font-bold text-xs sm:text-sm bg-navy-900 text-white shadow-xs transition';
+            btn.className = 'px-4 py-2 rounded-xl font-bold text-xs sm:text-sm bg-blue-600 text-white shadow-xs transition flex-shrink-0 flex items-center space-x-1.5';
             btn.setAttribute('aria-current', 'page');
         } else {
-            btn.className = 'px-3.5 py-1.5 rounded-lg font-medium text-xs sm:text-sm text-slate-600 hover:text-navy-900 hover:bg-slate-100 transition';
+            btn.className = 'px-4 py-2 rounded-xl font-semibold text-xs sm:text-sm text-slate-600 hover:text-blue-600 hover:bg-blue-50/80 transition flex-shrink-0 flex items-center space-x-1.5 border border-transparent';
             btn.removeAttribute('aria-current');
         }
         container.appendChild(btn);
@@ -513,21 +549,23 @@ function closeMobileMenu() {
     }
 }
 
-function handleExploreDashboard() {
+function handleExplorePlatform(event) {
+    if (event && event.preventDefault) event.preventDefault();
     const user = getAuthUser();
     if (user) {
-        if (user.role === 'customer') {
-            switchTab('customer');
-            showCustomerSubView(currentCustomerSubView || 'dashboard');
-        } else if (user.role === 'store_manager') {
-            switchTab('manager');
-            showManagerSubView(currentManagerSubView || 'overview');
-        } else {
-            switchTab('overview');
-        }
+        goToUserWorkspace();
     } else {
         navigateToSection(null, 'portals');
     }
+}
+
+function handleViewPerformance(event) {
+    if (event && event.preventDefault) event.preventDefault();
+    navigateToSection(event, 'performance');
+}
+
+function handleExploreDashboard() {
+    handleExplorePlatform(null);
 }
 
 function handleSubmitFeedbackHero() {
@@ -953,22 +991,35 @@ async function loadExplorerFeedback(page = 1) {
 // 5. Supabase Authentication Controller & Profile Hydration
 // -----------------------------------------------------------------------------
 async function hydrateUserProfile(accessToken, baseUser = null) {
-    if (!accessToken) return baseUser;
+    let userObj = baseUser ? { ...baseUser } : {};
+    if (userObj.user_metadata) {
+        if (!userObj.full_name && userObj.user_metadata.full_name) {
+            userObj.full_name = userObj.user_metadata.full_name;
+        }
+        if ((!userObj.role || userObj.role === 'authenticated') && userObj.user_metadata.role) {
+            userObj.role = userObj.user_metadata.role;
+        }
+        if (!userObj.assigned_store_id && userObj.user_metadata.assigned_store_id) {
+            userObj.assigned_store_id = userObj.user_metadata.assigned_store_id;
+        }
+    }
+    if (!accessToken) return userObj;
     try {
         const res = await fetch('/api/auth/me', {
             headers: { 'Authorization': `Bearer ${accessToken}` }
         });
         if (res.ok) {
             const profile = await res.json();
-            return { ...(baseUser || {}), ...profile };
+            return { ...userObj, ...profile };
         }
     } catch (e) {
         console.warn('Profile hydration failed:', e);
     }
-    return baseUser;
+    return userObj;
 }
 
 async function initSupabaseAuth() {
+    if (_supabase) return;
     try {
         const res = await fetch('/api/config/public');
         if (!res.ok) return;
@@ -978,29 +1029,20 @@ async function initSupabaseAuth() {
             _supabase = window.supabase.createClient(config.supabase_url, config.supabase_publishable_key);
             console.log('Supabase client initialized.');
 
-            // Only adopt Supabase session if no valid local session is active
-            const hasLocalToken = !!(localStorage.getItem('r5_token') || sessionStorage.getItem('r5_token'));
-            const { data: sessionData, error } = await _supabase.auth.getSession();
-            if (sessionData && sessionData.session && !hasLocalToken) {
-                _currentSession = sessionData.session;
-                const hydrated = await hydrateUserProfile(sessionData.session.access_token, sessionData.session.user);
-                _currentUser = hydrated;
-                setLocalSession(sessionData.session.access_token, hydrated);
-            }
-
             // Listen for auth state changes (login, logout, token refresh)
             _supabase.auth.onAuthStateChange(async (event, session) => {
-                if (session) {
-                    _currentSession = session;
-                    const hydrated = await hydrateUserProfile(session.access_token, session.user);
-                    _currentUser = hydrated;
-                    setLocalSession(session.access_token, hydrated);
-                } else if (!_currentSession || _currentSession.provider !== 'local') {
-                    const localTok = localStorage.getItem('r5_token') || sessionStorage.getItem('r5_token');
-                    if (!localTok) {
-                        _currentSession = null;
-                        _currentUser = null;
-                        updateAuthUI(null);
+                if (event === 'SIGNED_OUT') {
+                    clearLocalSession();
+                    return;
+                }
+                if (session && session.access_token) {
+                    const profile = await validateTokenWithBackend(session.access_token);
+                    if (profile) {
+                        _currentSession = session;
+                        _currentUser = profile;
+                        setLocalSession(session.access_token, profile);
+                    } else {
+                        clearLocalSession();
                     }
                 }
             });
@@ -1017,26 +1059,37 @@ function updateAuthUI(user) {
     const emailEl = document.getElementById('userEmailDisplay');
     const pubLinks = document.getElementById('publicNavLinks');
 
-    if (user) {
+    const isValidUser = user && (user.role || (user.user_metadata && user.user_metadata.role));
+
+    if (isValidUser) {
         if (btnSignIn) btnSignIn.classList.add('hidden');
         if (badge) badge.classList.remove('hidden');
         if (pubLinks) pubLinks.classList.add('hidden');
 
         const meta = user.user_metadata || {};
-        const role = String(user.role || meta.role || 'customer').toLowerCase();
+        const role = String(user.role || meta.role || '').toLowerCase();
         const storeId = user.assigned_store_id || meta.assigned_store_id;
         const storeSuffix = storeId ? ` • ${storeId}` : '';
-
-        if (roleEl) roleEl.innerText = `${role.toUpperCase()}${storeSuffix}`;
-        if (emailEl) emailEl.innerText = user.email || 'User';
+        const roleDisplay = role === 'customer' ? 'Customer' : (role === 'store_manager' ? 'Store Manager' : (role === 'admin' ? 'HQ Admin' : (role ? role.toUpperCase() : '')));
+        if (roleEl) roleEl.innerText = `${roleDisplay}${storeSuffix}`;
+        if (emailEl) emailEl.innerText = user.full_name || meta.full_name || user.email || 'User';
     } else {
         if (btnSignIn) btnSignIn.classList.remove('hidden');
         if (badge) badge.classList.add('hidden');
         if (pubLinks) pubLinks.classList.remove('hidden');
+        if (roleEl) roleEl.innerText = '';
+        if (emailEl) emailEl.innerText = '';
     }
 
-    const currentTab = sessionStorage.getItem('vse_active_tab') || 'home';
-    renderWorkspaceNavigation(user, currentTab);
+    const currentTab = getCurrentActiveTab();
+    if (!isValidUser || currentTab === 'home') {
+        const navBar = document.getElementById('workspaceNavBar');
+        const container = document.getElementById('workspaceNavItems');
+        if (navBar) navBar.classList.add('hidden');
+        if (container) container.innerHTML = '';
+    } else {
+        renderWorkspaceNavigation(user, currentTab);
+    }
 }
 
 function openAuthModal() {
@@ -1205,18 +1258,11 @@ async function submitAuthForm(event) {
 }
 
 async function handleSignOut() {
-    clearLocalSession();
     if (_supabase) {
         try { await _supabase.auth.signOut(); } catch (e) {}
     }
-    _currentSession = null;
-    _currentUser = null;
-    try {
-        sessionStorage.removeItem('vse_active_tab');
-        sessionStorage.removeItem('r5_token');
-        sessionStorage.removeItem('r5_user');
-    } catch (e) {}
-    updateAuthUI(null);
+    clearLocalSession();
+    closeAuthModal();
     showManagerToast('Signed Out', 'You have been signed out successfully.', 'success');
     history.replaceState({ tab: 'home' }, '', '#home');
     switchTab('home', false);
@@ -1256,29 +1302,32 @@ function getAuthToken() {
         return _currentSession.access_token;
     }
     const token = localStorage.getItem('r5_token') || sessionStorage.getItem('r5_token');
-    if (token) {
-        const user = getAuthUser();
-        _currentSession = { access_token: token, user: user, provider: 'local' };
-        return token;
-    }
-    return null;
+    return token || null;
 }
 
 function getAuthUser() {
-    if (_currentUser) return _currentUser;
+    if (_currentUser && _currentUser.role) return _currentUser;
+    const token = getAuthToken();
+    if (!token) {
+        _currentUser = null;
+        return null;
+    }
     const stored = localStorage.getItem('r5_user') || sessionStorage.getItem('r5_user');
     if (stored) {
         try {
             const parsed = JSON.parse(stored);
-            _currentUser = parsed;
-            return parsed;
+            if (parsed && (parsed.id || parsed.email) && parsed.role) {
+                _currentUser = parsed;
+                return parsed;
+            }
         } catch (e) {}
     }
+    _currentUser = null;
     return null;
 }
 
 function setLocalSession(token, user) {
-    if (!token) return;
+    if (!token || !user) return;
     try {
         localStorage.setItem('r5_token', token);
         localStorage.setItem('r5_user', JSON.stringify(user));
@@ -1298,20 +1347,106 @@ function clearLocalSession() {
         localStorage.removeItem('r5_user');
         sessionStorage.removeItem('r5_token');
         sessionStorage.removeItem('r5_user');
-    } catch (e) {}
+        sessionStorage.removeItem('vse_active_tab');
+        localStorage.removeItem('vse_active_tab');
+
+        // Scrub any GoTrue / Supabase cached tokens from localStorage
+        const keysToRemove = [];
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && (key.startsWith('sb-') && key.endsWith('-auth-token'))) {
+                keysToRemove.push(key);
+            }
+        }
+        keysToRemove.forEach(k => {
+            try { localStorage.removeItem(k); } catch (e) {}
+        });
+    } catch (e) {
+        console.warn('Storage clear exception:', e);
+    }
     _currentSession = null;
     _currentUser = null;
     updateAuthUI(null);
 }
 
-function loadStoredLocalSession() {
-    const token = localStorage.getItem('r5_token') || sessionStorage.getItem('r5_token');
-    const user = getAuthUser();
-    if (token && user) {
-        _currentSession = { access_token: token, user: user, provider: 'local' };
-        _currentUser = user;
-        updateAuthUI(user);
+async function validateTokenWithBackend(token) {
+    if (!token) return null;
+    try {
+        const res = await fetch('/api/auth/me', {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Cache-Control': 'no-cache, no-store'
+            }
+        });
+        if (res.ok) {
+            const profile = await res.json();
+            if (profile && (profile.id || profile.email) && profile.role) {
+                return profile;
+            }
+        }
+        return null;
+    } catch (e) {
+        console.warn('Token validation with backend failed:', e);
+        return null;
     }
+}
+
+async function restoreAndValidateStoredSession() {
+    // 1. Check local / session storage token
+    const token = localStorage.getItem('r5_token') || sessionStorage.getItem('r5_token');
+    if (token) {
+        const validatedProfile = await validateTokenWithBackend(token);
+        if (validatedProfile) {
+            _currentSession = { access_token: token, user: validatedProfile, provider: 'local' };
+            _currentUser = validatedProfile;
+            try {
+                localStorage.setItem('r5_user', JSON.stringify(validatedProfile));
+                sessionStorage.setItem('r5_user', JSON.stringify(validatedProfile));
+            } catch (e) {}
+            updateAuthUI(validatedProfile);
+            return validatedProfile;
+        } else {
+            // Token rejected or expired -> purge immediately
+            clearLocalSession();
+        }
+    } else {
+        clearLocalSession();
+    }
+
+    // 2. If Supabase is available, initialize it and check session
+    if (window.supabase) {
+        try {
+            await initSupabaseAuth();
+            if (_supabase) {
+                const { data: supaSessionData } = await _supabase.auth.getSession();
+                if (supaSessionData && supaSessionData.session && supaSessionData.session.access_token) {
+                    const validSupaProfile = await validateTokenWithBackend(supaSessionData.session.access_token);
+                    if (validSupaProfile) {
+                        _currentSession = supaSessionData.session;
+                        _currentUser = validSupaProfile;
+                        setLocalSession(supaSessionData.session.access_token, validSupaProfile);
+                        return validSupaProfile;
+                    } else {
+                        try { await _supabase.auth.signOut(); } catch (e) {}
+                        clearLocalSession();
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn('Supabase session validation error:', e);
+        }
+    }
+
+    // Default to unauthenticated guest
+    _currentUser = null;
+    _currentSession = null;
+    updateAuthUI(null);
+    return null;
+}
+
+function loadStoredLocalSession() {
+    restoreAndValidateStoredSession();
 }
 
 // Verified demonstration account definitions for evaluator / demo mode
@@ -1390,6 +1525,7 @@ async function quickLoginDemo(target, maybePassword = null) {
             setLocalSession(data.access_token, data.user);
         }
 
+        closeAuthModal();
         const activeUser = getAuthUser();
         const roleLabel = activeUser ? activeUser.role : 'user';
         const nameLabel = activeUser ? activeUser.full_name : 'User';
@@ -1423,6 +1559,15 @@ async function logoutManagerWorkspace() {
 let currentManagerSubView = 'overview';
 
 function showManagerSubView(subView, pushHistory = true) {
+    const user = getAuthUser();
+    const token = getAuthToken();
+    if (!user || !token || (user.role !== 'store_manager' && user.role !== 'admin')) {
+        history.replaceState({ tab: 'home' }, '', '#home');
+        switchTab('home', false);
+        openAuthModalForRole('manager');
+        return;
+    }
+
     const validSubviews = ['overview', 'insights', 'inbox', 'alerts', 'actions', 'analytics', 'reports', 'settings'];
     if (!subView || !validSubviews.includes(subView)) {
         subView = 'overview';
@@ -1475,10 +1620,10 @@ function showManagerSubView(subView, pushHistory = true) {
         const b = document.getElementById(sb.id);
         if (b) {
             if (sb.key === subView) {
-                b.className = 'px-3.5 py-2 rounded-lg bg-saffron-500 text-navy-900 font-bold transition shadow-xs flex items-center space-x-1.5';
+                b.className = 'px-4 py-2 rounded-xl bg-blue-600 text-white font-bold transition shadow-xs flex items-center space-x-1.5 flex-shrink-0';
                 b.setAttribute('aria-current', 'page');
             } else {
-                b.className = 'px-3.5 py-2 rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 transition flex items-center space-x-1.5';
+                b.className = 'px-4 py-2 rounded-xl text-slate-600 hover:text-blue-600 hover:bg-blue-50/80 transition flex items-center space-x-1.5 flex-shrink-0 border border-transparent';
                 b.removeAttribute('aria-current');
             }
         }
@@ -1499,10 +1644,10 @@ function showManagerSubView(subView, pushHistory = true) {
         const nb = document.getElementById(ni.id);
         if (nb) {
             if (ni.key === subView) {
-                nb.className = 'px-3.5 py-1.5 rounded-lg font-bold text-xs sm:text-sm bg-navy-900 text-white shadow-xs transition';
+                nb.className = 'px-4 py-2 rounded-xl font-bold text-xs sm:text-sm bg-blue-600 text-white shadow-xs transition flex-shrink-0 flex items-center space-x-1.5';
                 nb.setAttribute('aria-current', 'page');
             } else {
-                nb.className = 'px-3.5 py-1.5 rounded-lg font-medium text-xs sm:text-sm text-slate-600 hover:text-navy-900 hover:bg-slate-100 transition';
+                nb.className = 'px-4 py-2 rounded-xl font-semibold text-xs sm:text-sm text-slate-600 hover:text-blue-600 hover:bg-blue-50/80 transition flex-shrink-0 flex items-center space-x-1.5 border border-transparent';
                 nb.removeAttribute('aria-current');
             }
         }
@@ -1660,7 +1805,7 @@ async function loadManagerAlerts() {
                     <p class="text-red-600">Your authentication session is invalid or has expired. Please sign in again using one of the demo buttons above.</p>
                     <div class="pt-1 flex items-center space-x-2">
                         <button onclick="quickLoginDemo('kankarbagh')" class="px-3 py-1.5 bg-red-700 hover:bg-red-800 text-white rounded-lg text-xs font-semibold shadow-xs">
-                            Re-authenticate as Kankarbagh Manager
+                            Kankarbagh SM Demo Login
                         </button>
                     </div>
                 </div>
@@ -2371,12 +2516,18 @@ async function loadManagerInbox(page = 1) {
                         ${statusBadge}
                         <div class="flex flex-wrap items-center justify-center gap-1">
                             ${buttons}
+                            <button onclick="openGeminiAnalysisModal('${escapeHtml(r.feedback_id)}')" class="px-2 py-1 bg-gradient-to-r from-blue-50 to-indigo-50 hover:from-blue-100 hover:to-indigo-100 text-blue-800 border border-blue-200 rounded font-bold text-[10px] transition flex items-center space-x-1 shadow-2xs" title="Analyze with Google Gemini Hybrid AI"><span>✨ AI Insights</span></button>
                         </div>
                         ${r.resolution_notes ? `<div class="text-[10px] text-slate-500 italic max-w-[160px] truncate" title="${escapeHtml(r.resolution_notes)}">Note: "${escapeHtml(r.resolution_notes)}"</div>` : ''}
                     </div>
                 `;
             } else {
-                actionColHtml = `<span class="px-2 py-0.5 rounded bg-slate-100 text-slate-500 font-mono text-[10px]">Baseline</span>`;
+                actionColHtml = `
+                    <div class="flex flex-col items-center space-y-1">
+                        <span class="px-2 py-0.5 rounded bg-slate-100 text-slate-500 font-mono text-[10px]">Baseline</span>
+                        <button onclick="openGeminiAnalysisModal('${escapeHtml(r.feedback_id)}')" class="px-2 py-1 bg-gradient-to-r from-blue-50 to-indigo-50 hover:from-blue-100 hover:to-indigo-100 text-blue-800 border border-blue-200 rounded font-bold text-[10px] transition flex items-center space-x-1 shadow-2xs" title="Analyze with Google Gemini Hybrid AI"><span>✨ AI Insights</span></button>
+                    </div>
+                `;
             }
 
             tr.innerHTML = `
@@ -2512,6 +2663,161 @@ async function handleManagerFeedbackAction(feedbackId, action, note = null) {
     }
 }
 
+// -----------------------------------------------------------------------------
+// Google Gemini Hybrid AI Modal & Fleet Summary Handlers
+// -----------------------------------------------------------------------------
+async function openGeminiAnalysisModal(feedbackId) {
+    const modal = document.getElementById('geminiAnalysisModal');
+    if (!modal) return;
+    modal.classList.remove('hidden');
+
+    document.getElementById('geminiModalFeedbackMeta').innerText = `ID: ${feedbackId}`;
+    document.getElementById('geminiModalFeedbackText').innerText = 'Loading feedback record...';
+    document.getElementById('geminiModalSummary').innerText = 'Analyzing feedback with Hybrid AI...';
+    document.getElementById('geminiModalDetectedIssues').innerHTML = '<span class="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 font-semibold text-xs border border-slate-200">Processing...</span>';
+    document.getElementById('geminiModalRootCauses').innerHTML = '<li>Evaluating operational root causes...</li>';
+    document.getElementById('geminiModalRecommendedActions').innerHTML = '<li class="p-2.5 bg-emerald-50/60 border border-emerald-200 rounded-lg flex items-start space-x-2"><span class="text-emerald-600 font-bold">✓</span><span>Formulating actionable store steps...</span></li>';
+    document.getElementById('geminiModalUrgency').innerText = 'Evaluating urgency...';
+    document.getElementById('geminiModalStatusBadge').innerText = 'Analyzing';
+    document.getElementById('geminiModalStatusBadge').className = 'text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 border border-blue-200';
+
+    // Find the record in local memory to display text immediately
+    const records = window._managerInboxRecords || [];
+    const localRec = records.find(r => r.feedback_id === feedbackId);
+    if (localRec) {
+        document.getElementById('geminiModalFeedbackText').innerText = localRec.text || localRec.feedback_text || '';
+        document.getElementById('geminiModalFeedbackMeta').innerText = `ID: ${feedbackId} • Store: ${localRec.store_id || 'Assigned Store'}`;
+    }
+
+    try {
+        const token = getAuthToken();
+        const headers = { 'Content-Type': 'application/json' };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+
+        const res = await fetch(`/api/manager/feedback/${encodeURIComponent(feedbackId)}/gemini-analyze`, {
+            method: 'POST',
+            headers: headers
+        });
+
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({ detail: 'Analysis failed' }));
+            throw new Error(err.detail || `Server returned ${res.status}`);
+        }
+
+        const data = await res.json();
+        const analysis = data.analysis || {};
+
+        if (localRec && (localRec.text || localRec.feedback_text)) {
+            document.getElementById('geminiModalFeedbackText').innerText = localRec.text || localRec.feedback_text;
+        }
+
+        document.getElementById('geminiModalSummary').innerText = analysis.summary || 'Summary unavailable.';
+
+        const issuesEl = document.getElementById('geminiModalDetectedIssues');
+        if (analysis.detected_issues && analysis.detected_issues.length > 0) {
+            issuesEl.innerHTML = analysis.detected_issues.map(iss => 
+                `<span class="px-2.5 py-1 rounded-lg bg-blue-50 text-blue-800 font-semibold text-xs border border-blue-200 flex items-center space-x-1"><span>📌</span><span>${escapeHtml(iss)}</span></span>`
+            ).join('');
+        } else {
+            issuesEl.innerHTML = '<span class="text-slate-400 italic">No specific issue tags extracted</span>';
+        }
+
+        const causesEl = document.getElementById('geminiModalRootCauses');
+        if (analysis.possible_root_causes && analysis.possible_root_causes.length > 0) {
+            causesEl.innerHTML = analysis.possible_root_causes.map(c => 
+                `<li class="leading-relaxed">${escapeHtml(c)}</li>`
+            ).join('');
+        } else {
+            causesEl.innerHTML = '<li>Standard operational process variation.</li>';
+        }
+
+        const actionsEl = document.getElementById('geminiModalRecommendedActions');
+        if (analysis.recommended_actions && analysis.recommended_actions.length > 0) {
+            actionsEl.innerHTML = analysis.recommended_actions.map(a => 
+                `<li class="p-2.5 bg-emerald-50/70 border border-emerald-200/90 rounded-lg flex items-start space-x-2 text-slate-800"><span class="text-emerald-600 font-bold shrink-0">✓</span><span>${escapeHtml(a)}</span></li>`
+            ).join('');
+        } else {
+            actionsEl.innerHTML = '<li class="p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-600">Review standard store operational checklist.</li>';
+        }
+
+        document.getElementById('geminiModalUrgency').innerText = analysis.urgency_explanation || 'Standard operational review.';
+        document.getElementById('geminiModalDisclaimer').innerText = analysis.disclaimer || 'AI-generated analytical hypotheses and recommendations for human store manager review.';
+
+        const statusBadge = document.getElementById('geminiModalStatusBadge');
+        const modelNameEl = document.getElementById('geminiModalModelName');
+        if (analysis.model_status === 'active') {
+            statusBadge.innerText = 'Gemini Active';
+            statusBadge.className = 'text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-400/20 text-emerald-300 border border-emerald-400/40';
+            modelNameEl.innerText = analysis.model_name || 'Google Gemini 1.5 Flash';
+        } else {
+            statusBadge.innerText = 'Deterministic Rules (Fallback)';
+            statusBadge.className = 'text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/40';
+            modelNameEl.innerText = 'Deterministic Rule Engine (Fallback)';
+        }
+    } catch (e) {
+        console.error('Gemini feedback analysis error:', e);
+        document.getElementById('geminiModalSummary').innerText = `Notice: ${e.message}`;
+        document.getElementById('geminiModalStatusBadge').innerText = 'Advisory Notice';
+        document.getElementById('geminiModalStatusBadge').className = 'text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200';
+    }
+}
+
+function closeGeminiAnalysisModal() {
+    const modal = document.getElementById('geminiAnalysisModal');
+    if (modal) modal.classList.add('hidden');
+}
+
+async function refreshGeminiFleetSummary() {
+    const badge = document.getElementById('geminiFleetBadge');
+    if (badge) {
+        badge.innerText = 'Refreshing...';
+        badge.className = 'text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 border border-blue-200';
+    }
+
+    try {
+        const token = getAuthToken();
+        const headers = { 'Content-Type': 'application/json' };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+
+        const res = await fetch('/api/admin/gemini/network-summary', {
+            method: 'GET',
+            headers: headers
+        });
+
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+
+        const execEl = document.getElementById('geminiFleetExecutiveText');
+        if (execEl) execEl.innerText = data.executive_summary || '';
+
+        const patEl = document.getElementById('geminiFleetPatternsList');
+        if (patEl && data.key_patterns) {
+            patEl.innerHTML = data.key_patterns.map(p => `<li>${escapeHtml(p)}</li>`).join('');
+        }
+
+        const intEl = document.getElementById('geminiFleetInterventionsList');
+        if (intEl && data.recommended_hq_interventions) {
+            intEl.innerHTML = data.recommended_hq_interventions.map(i => `<li class="p-2 rounded bg-white/5 border border-white/5">${escapeHtml(i)}</li>`).join('');
+        }
+
+        if (badge) {
+            if (data.model_status === 'active') {
+                badge.innerText = 'Gemini Active';
+                badge.className = 'text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-400/20 text-emerald-300 border border-emerald-400/40';
+            } else {
+                badge.innerText = 'Local Rules Engine';
+                badge.className = 'text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/40';
+            }
+        }
+    } catch (e) {
+        console.error('Failed to refresh Gemini fleet summary:', e);
+        if (badge) {
+            badge.innerText = 'Local Rules Engine';
+            badge.className = 'text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/40';
+        }
+    }
+}
+
 // =============================================================================
 // 7. Customer Portal Controller
 // =============================================================================
@@ -2526,7 +2832,7 @@ async function loadCustomerPortal() {
     const gate = document.getElementById('customerAuthGate');
     const header = document.getElementById('customerActiveHeader');
 
-    if (!user || !token) {
+    if (!user || !token || !user.role) {
         if (gate) gate.classList.remove('hidden');
         if (header) header.classList.add('hidden');
         document.getElementById('custSubViewDashboard')?.classList.add('hidden');
@@ -2541,14 +2847,31 @@ async function loadCustomerPortal() {
 
     const nameEl = document.getElementById('custUserName');
     const emailEl = document.getElementById('custUserEmail');
-    if (nameEl) nameEl.innerText = user.full_name || (user.email ? user.email.split('@')[0] : 'Customer');
+    const roleBadge = document.getElementById('custRoleBadge');
+
+    const meta = user.user_metadata || {};
+    const displayName = user.full_name || meta.full_name || (user.email ? user.email.split('@')[0] : 'Customer');
+    if (nameEl) nameEl.innerText = displayName;
     if (emailEl) emailEl.innerText = user.email || '';
+    if (roleBadge) {
+        const rawRole = String(user.role || meta.role || 'customer').toLowerCase();
+        roleBadge.innerText = rawRole === 'customer' ? 'Customer' : (rawRole === 'store_manager' ? 'Store Manager' : (rawRole === 'admin' ? 'HQ Admin' : rawRole));
+    }
 
     await populateCustomerStoreSelect();
     showCustomerSubView(currentCustomerSubView || 'dashboard');
 }
 
 function showCustomerSubView(subView, pushHistory = true) {
+    const user = getAuthUser();
+    const token = getAuthToken();
+    if (!user || !token || !user.role) {
+        history.replaceState({ tab: 'home' }, '', '#home');
+        switchTab('home', false);
+        openAuthModalForRole('customer');
+        return;
+    }
+
     currentCustomerSubView = subView;
     const targetHash = '#customer/' + subView;
     if (pushHistory) {
@@ -2573,10 +2896,10 @@ function showCustomerSubView(subView, pushHistory = true) {
         }
         if (btn) {
             if (v === subView) {
-                btn.className = 'px-4 py-2 rounded-lg bg-saffron-500 text-navy-900 font-bold transition shadow-xs';
+                btn.className = 'px-4 py-2 rounded-xl bg-blue-600 text-white font-bold transition shadow-xs flex-shrink-0';
                 btn.setAttribute('aria-current', 'page');
             } else {
-                btn.className = 'px-4 py-2 rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 transition';
+                btn.className = 'px-4 py-2 rounded-xl text-slate-600 hover:text-blue-600 hover:bg-blue-50/80 font-semibold transition flex-shrink-0 border border-transparent';
                 btn.removeAttribute('aria-current');
             }
         }
@@ -2863,6 +3186,14 @@ async function loadCustomerDashboard() {
         }
 
         const data = await res.json();
+        if (data.full_name) {
+            const nameEl = document.getElementById('custUserName');
+            if (nameEl) nameEl.innerText = data.full_name;
+            if (_currentUser && (!_currentUser.full_name || _currentUser.full_name === 'Customer')) {
+                _currentUser.full_name = data.full_name;
+                setLocalSession(token, _currentUser);
+            }
+        }
         const totalVal = Number(data.total_submissions || 0);
         const openVal = Number(data.open_submissions || 0);
         const resVal = Number(data.resolved_submissions || 0);

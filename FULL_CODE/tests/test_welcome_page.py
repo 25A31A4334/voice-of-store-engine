@@ -61,21 +61,50 @@ def test_hero_section_content_and_ctas():
     # Hero section container
     assert 'id="hero"' in html
     # Required headline
-    assert "Turn Customer Feedback Into" in html
-    assert "Better Store Experiences" in html
+    assert "AI that listens." in html
+    assert "Insights that act." in html
     # Required supporting text
-    assert "Bring customer reviews, complaints, and store feedback together" in html
-    assert "identify recurring issues, understand customer sentiment, and help teams take action." in html
+    assert "Turn customer feedback into meaningful insights." in html
+    assert "Identify emerging problems, understand customer sentiment, and help store teams take informed action." in html
     # Required CTAs
-    assert "Explore Dashboard" in html
-    assert "Submit Feedback" in html
-    assert "handleExploreDashboard()" in html
-    assert "handleSubmitFeedbackHero()" in html
+    assert "Explore Platform" in html
+    assert "View Performance" in html
+    assert "handleExplorePlatform" in html
+    assert "handleViewPerformance" in html
     # Architectural visual elements
     assert "INTELLIGENCE FLOW" in html
     assert "Multi-Channel Ingestion" in html
-    assert "AI Classification Core" in html
     assert "Store Manager Remediation" in html
+
+
+def test_performance_at_a_glance_scorecard():
+    """Verify Performance at a Glance section, 4 metric cards, and technical evaluation deep-dive."""
+    response = client.get("/")
+    assert response.status_code == 200
+    html = response.text
+
+    # Destination anchor and headers
+    assert 'id="performance"' in html
+    assert "Proven AI Performance" in html
+    assert "Measured results from benchmark evaluation of the Voice-of-Store Engine." in html
+
+    # 4 Key metric cards
+    assert "79.93%" in html and "0.7993" in html
+    assert "99.88%" in html and "0.9988" in html
+    assert "+1 Week" in html and "EX-1" in html
+    assert "+66.2%" in html
+
+    # Mandatory visible disclaimer note
+    assert "Results are based on benchmark evaluation data and specific test conditions. Actual performance may vary." in html
+
+    # Technical deep-dive evaluation details
+    assert "Evaluation Methodology" in html
+    assert "Dataset & Evaluation Period" in html
+    assert "3,000 Records" in html
+    assert "13 Weeks" in html
+    assert "60 Retail Stores" in html
+    assert "Real-World Deployment & Evaluation Limitations" in html
+    assert "Zero PII exposed" in html
 
 
 def test_platform_features_six_operational_cards():

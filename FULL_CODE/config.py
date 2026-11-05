@@ -74,6 +74,12 @@ class Settings:
     # Environment mode: 'production', 'development', or 'test'
     APP_ENV: str = os.getenv("APP_ENV", "development").lower()
 
+    # Google Gemini Hybrid AI Configuration
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+    GEMINI_ENABLED: bool = os.getenv("GEMINI_ENABLED", "true").lower() in ("true", "1", "yes")
+    GEMINI_TIMEOUT_SECONDS: int = int(os.getenv("GEMINI_TIMEOUT_SECONDS", "8"))
+
     # Test-mode flag (activated during unit/integration tests)
     TESTING: bool = (
         os.getenv("TESTING", "false").lower() in ("true", "1", "yes")
